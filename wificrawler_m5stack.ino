@@ -1,16 +1,16 @@
 #define MAJOR_VERSION 1
-#define MINOR_VERSION 0
+#define MINOR_VERSION 2
 
 #include "private.h"
 #define DATA_FILE_NAME "/json.txt"
 
 #include <M5Core2.h>
 #include <WiFi.h>
+#include <time.h>
 #include <HTTPClient.h>
 #include <TinyGPSPlus.h>
 
 #include "ssiddata.h"
-//#include "ssidDisplay.h"
 #include "tty.h"
 #include "myWebApi.h"
 #include "debugTool.h"
@@ -18,26 +18,28 @@
 // timer
 hw_timer_t *timer = NULL;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
-
 // timer variables
 volatile unsigned long gTimerCounter = 0;
 //
+
 static const uint32_t GPSBaud = 9600;
 static const int Font1Height = 8;  // Font=1, Adafruit 8 pixels ascii font
 static const long WifiScanInterval = 3000; // 3000 msec
 static const long AsyncScanTimeout = 10 * 1000; // Wi-Fi scan Timeout(msec)
 static const long PassiveScanTimeout = 300; // passive scan timeout at 1channel(msec)
 
-
 //Vibration
-// AXP192  power;
+AXP192  power;
 //Creat The TinyGPS++ object.
 TinyGPSPlus gps;
 // The serial connection to the GPS device.
 HardwareSerial ss(2);
 
+//Real Time Clock
+//RTC_TimeTypeDef   RTC_TimeStruct;
+//RTC_DateTypeDef   RTC_DateStruct;
+
 SsidData ssidData;
-//SsidDisplay ssidDisplay;
 Tty upperTty;
 Tty lowerTty;
 // global variables
@@ -73,7 +75,7 @@ void setup() {
   WiFi.disconnect();    //Turn off all wifi connections.
   delay(100);           //100 ms delay.
 
-  sprintf(tmpStr,"Wi-Fi Clawer for M5Stack. version %d.%02d", MAJOR_VERSION, MINOR_VERSION);
+  sprintf(tmpStr,"Wi-Fi Crawler for M5Stack. version %d.%02d", MAJOR_VERSION, MINOR_VERSION);
   upperTty.writeLine(0,tmpStr);
   sprintf(tmpStr,"User name:%s", MYNAME);
   upperTty.writeLine(1,tmpStr);
@@ -93,6 +95,7 @@ void setup() {
   upperTty.writeLine(3,"GPS:HDOP OK.");
   while (!gps.date.isValid()) { smartDelay(500); }
   while (!gps.time.isValid()) { smartDelay(500); }
+  setRtc(gps.date, gps.time);
   upperTty.writeLine(4,"GPS:DATE,TIME OK.");
   while (!gps.location.isValid()) { smartDelay(500); }
   upperTty.writeLine(5,"GPS:LOCATION OK.");
@@ -111,6 +114,8 @@ void loop() {
   char  tempStr[256]={0};
   int   markX, markY;
   int   markChar = ' ';     
+  RTC_TimeTypeDef   rtcTime;
+  RTC_DateTypeDef   rtcDate;
 
   markX = upperTty.getColumnSize()-1;       // TTY RIGHT
   markY = 0;                                // TTY TOP
@@ -136,7 +141,7 @@ void loop() {
   // Scanning Wi-Fi //////////////////////////////////////////////////////////
   if( millis()> (LastScanMillis+WifiScanInterval)){
     asyncScanStart = millis();    // set Scan Start Time  
-    WiFi.scanNetworks(true, false, false, PassiveScanTimeout);
+    WiFi.scanNetworks(true, false, true, PassiveScanTimeout);
     do {
       markChar = (markChar == '*') ? '+' : '*';   // alternate '*' <-> '+'
       upperTty.writeChar(markX, markY, markChar);
@@ -157,12 +162,9 @@ void loop() {
       Serial.printf("scanResult=%d\n",scanResult);
       // no networks found
       lowerTty.putString((char *)"no networks found.\n");
-/*
-      if(numberOfWifi == WIFI_SCAN_FAILED){
-        smartDelay(3000);
-      }
-*/
     } else {
+      M5.Rtc.GetDate(&rtcDate);
+      M5.Rtc.GetTime(&rtcTime);   
       // Wi-Fi Scan success ////////////////////////////////////////////////////
       if (gps.location.isValid()) {  // re-check location
         latitude = gps.location.lat();
@@ -177,7 +179,9 @@ void loop() {
         ssidData.frequency = 0;
         ssidData.latitude = latitude;
         ssidData.longitude = longitude;
-        strcpy(ssidData.datetime, "2023-01-01 00:00:00");
+        sprintf(ssidData.datetime,"%04d-%02d-%02d %02d:%02d:%02d",
+            gps.date.year(),rtcDate.Month,rtcDate.Date,rtcTime.Hours,rtcTime.Minutes,rtcTime.Seconds);
+//        strcpy(ssidData.datetime, "2023-01-01 00:00:00");
         json = json + ssidData.getJson() + ",\n";
         sprintf(tempStr,"%02d:%s %s RSSI=%d\n",ssidData.id, ssidData.essid, ssidData.bssid, ssidData.rssi);
         lowerTty.putString(tempStr);
@@ -187,86 +191,6 @@ void loop() {
   }
     smartDelay(20);
 }
-/*
-//  SsidData ssidData = SsidData();
-
-  // Buton A /////////////////////////////////////////////////////////////
-  if (M5.BtnA.isPressed()) {  //If button A is pressed.
-    M5.Lcd.clear();           //Clear the screen.
-    M5.Lcd.println("scan start");
-    // Init Wi-Fi scan 
-//   int n= WiFi.scanNetworks(false, false, false, 100);  //return the number of networks found. Active Scan
-//    int n = WiFi.scanNetworks(false, false, true,150);  //return the number of networks found. Passive Scan
-    WiFi.scanNetworks(true, false, true,150);     // async,passive mode
-
-    int numberOfWifi = WIFI_SCAN_RUNNING;
-    unsigned long timeout = 0;    
-    // Init GPS scan
-    int gpsStatus = 0;    // 0=scanning gps
-    timeout = millis() + 5000; // 5000 milliseconds
-    while( millis() < timeout ){
-      // Scanning Wi-Fi
-      if(numberOfWifi == WIFI_SCAN_RUNNING){
-        numberOfWifi = WiFi.scanComplete();
-      } 
-      if((numberOfWifi != WIFI_SCAN_RUNNING) && (gpsStatus !=0)){
-        // WiFi & GPS scan complete, or scan failed
-        break;
-      }        
-      M5.Lcd.printf(".");
-      delay(10);
-    }
-    Serial.printf("\nScan result numberOfWifi=%d,gpsStatus=%d\n",numberOfWifi,gpsStatus);
-
-    if ((numberOfWifi == WIFI_SCAN_RUNNING) ||(numberOfWifi == WIFI_SCAN_FAILED) ||(numberOfWifi == 0)) {  //If no network is found.
-      M5.Lcd.println("\nno networks found");
-    } else {  //If have network is found.
-      String json="";
-      M5.Lcd.printf("\nnetworks found:%d\n\n", numberOfWifi);
-      for (int i = 0; i < numberOfWifi; ++i) {  // Print SSID and RSSI for each network found.
-        M5.Lcd.printf("%d:", i + 1);
-        M5.Lcd.print(WiFi.SSID(i));
-        M5.Lcd.printf("(%d)", WiFi.RSSI(i));
-
-        ssidData.id = i ;
-        WiFi.SSID(i).getBytes((unsigned char *)ssidData.essid,sizeof(ssidData.essid));
-        strcpy(ssidData.bssid,"00:00:00:00:00:00");
-        ssidData.rssi = WiFi.RSSI(i);
-        ssidData.frequency = 0;
-        ssidData.latitude = 43.058095;
-        ssidData.longitude = 144.843528;
-        strcpy(ssidData.datetime,"2023-01-01 00:00:00");
-        delay(10);
-        json = json + ssidData.getJson() + ",\n";
-      }
-      writeRecord((char *)json.c_str());
-    }
-    delay(500);
-  }
-  // Button C ////////////////////////////////////////////////////////////
-  if (M5.BtnC.isPressed()) {  //If button C is pressed.
-    M5.Lcd.clear();           //Clear the screen.
-    M5.Lcd.println("Connect to Server\n");
-    Serial.printf("function:loop, ButtunC Pressed\n");
-    if(connectWiFi()){
-      if(connectToServer()){
-        M5.Lcd.printf("success.\n");
-      } else
-      {
-        M5.Lcd.printf("failed to connect to server.\n");
-      }
-    }
-    disconnectWiFi();
-    deleteFile();
-    Serial.printf("function:loop, ButtunC Pressed-exit\n");
-  }
-
-  smartDelay(200);
-  if (millis() > 5000 && gps.charsProcessed() < 10){
-    M5.Lcd.println(F("No GPS data received: check wiring"));  
-  }
-}
-*/
 static unsigned int checkUserAction(void){
   char  tempStr[256]={0};  
   unsigned int result = 0x00000000;
@@ -281,6 +205,7 @@ static unsigned int checkUserAction(void){
     int recordCount;   
 
     lowerTty.putString("Button A pressed.\n");
+    vibration(200);
     
     heatmapApi.init((char *)SERVER_HOST);    
     if(connectWiFi()){
@@ -319,14 +244,28 @@ static unsigned int checkUserAction(void){
   }
   if (M5.BtnB.isPressed()) {  //If button B is pressed.
     lowerTty.putString("Button B pressed.\n");
+    vibration(200);
+    // Display current information
+    // Date Time
+    RTC_TimeTypeDef   rtcTime;
+    RTC_DateTypeDef   rtcDate;
+    M5.Rtc.GetDate(&rtcDate);
+    M5.Rtc.GetTime(&rtcTime);   
+    sprintf(tempStr,"RTC Date & Time = %04d-%02d-%02d %02d:%02d:%02d\n",
+        gps.date.year(),rtcDate.Month,rtcDate.Date,rtcTime.Hours,rtcTime.Minutes,rtcTime.Seconds);
+    lowerTty.putString(tempStr);
+
     result = result | 0x00000002;
   }
   if (M5.BtnC.isPressed()) {  //If button C is pressed.
     lowerTty.putString("Button C pressed.\n");
+    vibration(200);
+    displayHelp();
+/*
     lowerTty.putString("Dump SD " DATA_FILE_NAME "\n");
     dumpRecord();
     smartDelay(2000);
-
+*/
     result = result | 0x00000004;
   }
   return result;    
@@ -517,4 +456,49 @@ bool deleteFile() {
 }
 void convertMacAddr(uint8_t *bin, char *str) {
   sprintf(str, "%02X:%02X:%02X:%02X:%02X:%02X", bin[0], bin[1], bin[2], bin[3], bin[4], bin[5]);
+}
+void setRtc(TinyGPSDate &d, TinyGPSTime &t){
+  RTC_TimeTypeDef   rtcTime;
+  RTC_DateTypeDef   rtcDate;
+
+  if(d.isValid() && t.isValid()){
+    rtcDate.Year = d.year();  // RTC YEAR is not available ( fiexd 2000 )
+    rtcDate.Month = d.month();
+    rtcDate.Date = d.day();
+    rtcTime.Hours = t.hour();
+    rtcTime.Minutes = t.minute();
+    rtcTime.Seconds = t.second();
+    M5.Rtc.SetDate(&rtcDate);
+    M5.Rtc.SetTime(&rtcTime);
+  }
+}
+void vibration(int msec){
+  power.SetLDOEnable(3,true);
+  delay(msec);
+  power.SetLDOEnable(3,false);
+}
+void displayHelp(){
+  char  tempStr[256]= {0};  
+  long  msec;
+  lowerTty.clear();  
+
+  lowerTty.putString("Wi-Fi Crawler Help\n");
+  sprintf(tempStr,"SSID=%s\n",HOME_SSID);
+  lowerTty.putString(tempStr);
+  lowerTty.putString("BUTTON A ... Post SSID record.\n");
+  lowerTty.putString("BUTTON B ... Display information.\n");
+  lowerTty.putString("BUTTON C ... Display this contents.\n");
+  lowerTty.putString("\n");
+  lowerTty.putString("Press BUTTON C to exit.\n");
+
+  msec = millis();      
+  while(millis() < msec + (30 * 1000)){
+    M5.update();  //Check the status of the key.
+    if (M5.BtnC.isPressed()) {
+      vibration(200);
+      break;
+    }
+    delay(100);
+  }
+  lowerTty.clear();
 }

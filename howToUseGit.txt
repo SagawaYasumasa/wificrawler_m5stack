@@ -27,6 +27,9 @@ urlはgithubの SSH 向けのものを取得すること
 ローカルリポジトリにcommit
 
 $git push heatmap
+or
+$git push -u origin main
+
  (heatmap)はリポジトリ名
 リモートリポジトリにpush
 
