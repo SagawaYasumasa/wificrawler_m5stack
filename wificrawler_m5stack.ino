@@ -1,8 +1,10 @@
 #define MAJOR_VERSION 1
-#define MINOR_VERSION 2
+#define MINOR_VERSION 3
 
 #include "private.h"
+#define CONFIG_FILE_NAME  "/system.ini"
 #define DATA_FILE_NAME "/json.txt"
+#define HOME_SSID_MAX   4
 
 #include <M5Core2.h>
 #include <WiFi.h>
@@ -10,6 +12,7 @@
 #include <HTTPClient.h>
 #include <TinyGPSPlus.h>
 
+#include "inifile.h"
 #include "ssiddata.h"
 #include "tty.h"
 #include "myWebApi.h"
@@ -20,7 +23,11 @@ hw_timer_t *timer = NULL;
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 // timer variables
 volatile unsigned long gTimerCounter = 0;
-//
+// Parameters
+size_t  paramFileSizeMax=0;
+String  paramHomeSsid[HOME_SSID_MAX];
+String  paramHomeSsidPass[HOME_SSID_MAX];
+
 
 static const uint32_t GPSBaud = 9600;
 static const int Font1Height = 8;  // Font=1, Adafruit 8 pixels ascii font
@@ -35,13 +42,10 @@ TinyGPSPlus gps;
 // The serial connection to the GPS device.
 HardwareSerial ss(2);
 
-//Real Time Clock
-//RTC_TimeTypeDef   RTC_TimeStruct;
-//RTC_DateTypeDef   RTC_DateStruct;
-
-SsidData ssidData;
-Tty upperTty;
-Tty lowerTty;
+Inifile   inifile;
+SsidData  ssidData;
+Tty       upperTty;
+Tty       lowerTty;
 // global variables
 volatile long LastScanMillis;
 /******************************************************************************/
@@ -55,8 +59,11 @@ void IRAM_ATTR onTimer() {
 }
 
 void setup() {
+  bool  ret;
   char  tmpStr[256]={0};
+  String  valueString;  
   M5.begin();                             //Init M5Stack.
+  SD.begin();
   ss.begin(GPSBaud, SERIAL_8N1, 33, 32);  //It requires the use of SoftwareSerial, and assumes that you have a 4800-baud serial GPS device hooked up on pins 4(rx) and 3(tx).
 
   // Init global variables
@@ -71,14 +78,30 @@ void setup() {
   upperTty.init(0,0,M5.Lcd.width(),64,TFT_WHITE,TFT_BLACK);
   lowerTty.init(0, 64, M5.Lcd.width(), M5.Lcd.height()-64, TFT_WHITE, TFT_BLACK);
 
+  // Init Paramaters
+  ret = inifile.getValue(CONFIG_FILE_NAME,"FILE_SIZE_MAX",valueString);
+  if(!ret){
+    lowerTty.putString("No paramater:FILE_SIZE_MAX\n");
+    while(true){};  // System halt
+  }  
+  paramFileSizeMax = (size_t)atoi(valueString.c_str());
+  sprintf(tmpStr,"paramFileSizeMax=%d\n",paramFileSizeMax);
+  lowerTty.putString(tmpStr);
+  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_0",paramHomeSsid[0]);
+  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_PASS_0",paramHomeSsidPass[0]);
+  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_1",paramHomeSsid[1]);
+  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_PASS_1",paramHomeSsidPass[1]);
+  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_2",paramHomeSsid[2]);
+  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_PASS_2",paramHomeSsidPass[2]);
+  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_3",paramHomeSsid[3]);
+  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_PASS_3",paramHomeSsidPass[3]);
+  
   WiFi.mode(WIFI_STA);  // Set WiFi to station mode and disconnect from an AP if it was previously connected.
   WiFi.disconnect();    //Turn off all wifi connections.
   delay(100);           //100 ms delay.
 
   sprintf(tmpStr,"Wi-Fi Crawler for M5Stack. version %d.%02d", MAJOR_VERSION, MINOR_VERSION);
   upperTty.writeLine(0,tmpStr);
-  sprintf(tmpStr,"User name:%s", MYNAME);
-  upperTty.writeLine(1,tmpStr);
 
   while(gps.charsProcessed()<10){
     if(millis()>10000){
@@ -89,15 +112,15 @@ void setup() {
   }  
     if (millis() > 10000 && gps.charsProcessed() < 10) {
   }
-  while (!gps.satellites.isValid()) { smartDelay(500); }
+  while (!gps.satellites.isValid()) { checkUserAction(); smartDelay(100); }
   upperTty.writeLine(2,"GSP:Satellites OK.");
-  while (!gps.hdop.isValid()) { smartDelay(500); }
+  while (!gps.hdop.isValid()) { checkUserAction(); smartDelay(100); }
   upperTty.writeLine(3,"GPS:HDOP OK.");
-  while (!gps.date.isValid()) { smartDelay(500); }
-  while (!gps.time.isValid()) { smartDelay(500); }
+  while (!gps.date.isValid()) { checkUserAction(); smartDelay(100); }
+  while (!gps.time.isValid()) { checkUserAction(); smartDelay(100); }
   setRtc(gps.date, gps.time);
   upperTty.writeLine(4,"GPS:DATE,TIME OK.");
-  while (!gps.location.isValid()) { smartDelay(500); }
+  while (!gps.location.isValid()) { checkUserAction(); smartDelay(100); }
   upperTty.writeLine(5,"GPS:LOCATION OK.");
   smartDelay(100);
 }
@@ -137,9 +160,8 @@ void loop() {
 
   // check button ////////////////////////////////////////////////////////////
   userAction = checkUserAction();
-
   // Scanning Wi-Fi //////////////////////////////////////////////////////////
-  if( millis()> (LastScanMillis+WifiScanInterval)){
+  if( isScanEnable() && millis()>(LastScanMillis+WifiScanInterval)){
     asyncScanStart = millis();    // set Scan Start Time  
     WiFi.scanNetworks(true, false, true, PassiveScanTimeout);
     do {
@@ -181,7 +203,6 @@ void loop() {
         ssidData.longitude = longitude;
         sprintf(ssidData.datetime,"%04d-%02d-%02d %02d:%02d:%02d",
             gps.date.year(),rtcDate.Month,rtcDate.Date,rtcTime.Hours,rtcTime.Minutes,rtcTime.Seconds);
-//        strcpy(ssidData.datetime, "2023-01-01 00:00:00");
         json = json + ssidData.getJson() + ",\n";
         sprintf(tempStr,"%02d:%s %s RSSI=%d\n",ssidData.id, ssidData.essid, ssidData.bssid, ssidData.rssi);
         lowerTty.putString(tempStr);
@@ -189,7 +210,7 @@ void loop() {
       writeRecord((char *)json.c_str());
     }
   }
-    smartDelay(20);
+  smartDelay(20);
 }
 static unsigned int checkUserAction(void){
   char  tempStr[256]={0};  
@@ -245,6 +266,9 @@ static unsigned int checkUserAction(void){
   if (M5.BtnB.isPressed()) {  //If button B is pressed.
     lowerTty.putString("Button B pressed.\n");
     vibration(200);
+    displayParameters();
+
+/*
     // Display current information
     // Date Time
     RTC_TimeTypeDef   rtcTime;
@@ -254,7 +278,7 @@ static unsigned int checkUserAction(void){
     sprintf(tempStr,"RTC Date & Time = %04d-%02d-%02d %02d:%02d:%02d\n",
         gps.date.year(),rtcDate.Month,rtcDate.Date,rtcTime.Hours,rtcTime.Minutes,rtcTime.Seconds);
     lowerTty.putString(tempStr);
-
+*/
     result = result | 0x00000002;
   }
   if (M5.BtnC.isPressed()) {  //If button C is pressed.
@@ -409,7 +433,24 @@ int createPostMsg(String& postMsg ){
   free(buf);
   return recordCount;
 }
-
+bool isScanEnable(){
+  const char *fileName = DATA_FILE_NAME;
+  File file;
+  size_t  size;
+  
+  file = SD.open(fileName, FILE_READ);
+  size = file.available();
+  file.close();
+  if(size > paramFileSizeMax){
+    lowerTty.putString("data file size too large.\n");
+    
+    while(checkUserAction() == 0){
+      smartDelay(100);      
+    }
+    return false;
+  }
+  return true;
+}
 int dumpRecord() {
   const char *fileName = DATA_FILE_NAME;
   char *buf;
@@ -477,19 +518,47 @@ void vibration(int msec){
   delay(msec);
   power.SetLDOEnable(3,false);
 }
+void displayParameters(){
+  char  tmpStr[256]= {0};  
+  long  msec;
+  int   i;
+  lowerTty.clear();  
+
+  lowerTty.putString("System Parameters\n");
+  sprintf(tmpStr,"FILE_SIZE_MAX=%d\n",paramFileSizeMax);
+  lowerTty.putString(tmpStr);
+  for(i=0;i<HOME_SSID_MAX;i++){
+    sprintf(tmpStr,"HOME_SSID_%d=%s / PASS=%s\n",i,paramHomeSsid[i].c_str(),paramHomeSsidPass[i].c_str());
+    lowerTty.putString(tmpStr);
+  }
+
+  lowerTty.putString("\n");
+  lowerTty.putString("Press BUTTON B to exit.\n");
+  delay(1000);
+
+  msec = millis();      
+  while(millis() < msec + (30 * 1000)){
+    M5.update();  //Check the status of the key.
+    if (M5.BtnB.isPressed()) {
+      vibration(200);
+      break;
+    }
+    delay(100);
+  }
+  lowerTty.clear();
+}
 void displayHelp(){
-  char  tempStr[256]= {0};  
+  char  tmpStr[256]= {0};  
   long  msec;
   lowerTty.clear();  
 
   lowerTty.putString("Wi-Fi Crawler Help\n");
-  sprintf(tempStr,"SSID=%s\n",HOME_SSID);
-  lowerTty.putString(tempStr);
-  lowerTty.putString("BUTTON A ... Post SSID record.\n");
-  lowerTty.putString("BUTTON B ... Display information.\n");
+  lowerTty.putString("BUTTON A ... Post record to Server.\n");
+  lowerTty.putString("BUTTON B ... Display system parameters.\n");
   lowerTty.putString("BUTTON C ... Display this contents.\n");
   lowerTty.putString("\n");
   lowerTty.putString("Press BUTTON C to exit.\n");
+  delay(1000);
 
   msec = millis();      
   while(millis() < msec + (30 * 1000)){
@@ -502,3 +571,4 @@ void displayHelp(){
   }
   lowerTty.clear();
 }
+
