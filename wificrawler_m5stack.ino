@@ -1,10 +1,11 @@
 #define MAJOR_VERSION 1
-#define MINOR_VERSION 3
+#define MINOR_VERSION 4
 
 #include "private.h"
 #define CONFIG_FILE_NAME  "/system.ini"
 #define DATA_FILE_NAME "/json.txt"
-#define HOME_SSID_MAX   4
+
+#define RSSI_VALID_VALUE  -75 
 
 #include <M5Core2.h>
 #include <WiFi.h>
@@ -16,6 +17,7 @@
 #include "ssiddata.h"
 #include "tty.h"
 #include "myWebApi.h"
+#include "myWifi.h"
 #include "debugTool.h"
 
 // timer
@@ -25,9 +27,6 @@ portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 volatile unsigned long gTimerCounter = 0;
 // Parameters
 size_t  paramFileSizeMax=0;
-String  paramHomeSsid[HOME_SSID_MAX];
-String  paramHomeSsidPass[HOME_SSID_MAX];
-
 
 static const uint32_t GPSBaud = 9600;
 static const int Font1Height = 8;  // Font=1, Adafruit 8 pixels ascii font
@@ -46,6 +45,7 @@ Inifile   inifile;
 SsidData  ssidData;
 Tty       upperTty;
 Tty       lowerTty;
+MyWifi    myWifi;
 // global variables
 volatile long LastScanMillis;
 /******************************************************************************/
@@ -61,7 +61,9 @@ void IRAM_ATTR onTimer() {
 void setup() {
   bool  ret;
   char  tmpStr[256]={0};
-  String  valueString;  
+  String  valueString;
+  String  ssidString;
+  String  pskString;  
   M5.begin();                             //Init M5Stack.
   SD.begin();
   ss.begin(GPSBaud, SERIAL_8N1, 33, 32);  //It requires the use of SoftwareSerial, and assumes that you have a 4800-baud serial GPS device hooked up on pins 4(rx) and 3(tx).
@@ -79,6 +81,7 @@ void setup() {
   lowerTty.init(0, 64, M5.Lcd.width(), M5.Lcd.height()-64, TFT_WHITE, TFT_BLACK);
 
   // Init Paramaters
+  // "FILE_SIZE_MAX"
   ret = inifile.getValue(CONFIG_FILE_NAME,"FILE_SIZE_MAX",valueString);
   if(!ret){
     lowerTty.putString("No paramater:FILE_SIZE_MAX\n");
@@ -87,14 +90,15 @@ void setup() {
   paramFileSizeMax = (size_t)atoi(valueString.c_str());
   sprintf(tmpStr,"paramFileSizeMax=%d\n",paramFileSizeMax);
   lowerTty.putString(tmpStr);
-  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_0",paramHomeSsid[0]);
-  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_PASS_0",paramHomeSsidPass[0]);
-  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_1",paramHomeSsid[1]);
-  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_PASS_1",paramHomeSsidPass[1]);
-  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_2",paramHomeSsid[2]);
-  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_PASS_2",paramHomeSsidPass[2]);
-  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_3",paramHomeSsid[3]);
-  inifile.getValue(CONFIG_FILE_NAME,"HOME_SSID_PASS_3",paramHomeSsidPass[3]);
+  // HOME_SSID and HOME_SSID_PASS
+  unsigned int i;
+  for(i=0;i<HOME_SSID_MAX;i++){
+    sprintf(tmpStr,"HOME_SSID_%d",i);
+    inifile.getValue(CONFIG_FILE_NAME,tmpStr,ssidString);
+    sprintf(tmpStr,"HOME_SSID_PASS_%d",i);
+    inifile.getValue(CONFIG_FILE_NAME,tmpStr,pskString);
+    myWifi.setSsid(i,ssidString.c_str(),pskString.c_str());
+  }
   
   WiFi.mode(WIFI_STA);  // Set WiFi to station mode and disconnect from an AP if it was previously connected.
   WiFi.disconnect();    //Turn off all wifi connections.
@@ -194,18 +198,20 @@ void loop() {
       }
       String json = "";
       for (int i = 0; i < numberOfWifi; ++i) {  // Print SSID and RSSI for each network found.
-        ssidData.id = i;
-        WiFi.SSID(i).getBytes((unsigned char *)ssidData.essid, sizeof(ssidData.essid));
-        convertMacAddr(WiFi.BSSID(i), ssidData.bssid);
-        ssidData.rssi = WiFi.RSSI(i);
-        ssidData.frequency = 0;
-        ssidData.latitude = latitude;
-        ssidData.longitude = longitude;
-        sprintf(ssidData.datetime,"%04d-%02d-%02d %02d:%02d:%02d",
-            gps.date.year(),rtcDate.Month,rtcDate.Date,rtcTime.Hours,rtcTime.Minutes,rtcTime.Seconds);
-        json = json + ssidData.getJson() + ",\n";
-        sprintf(tempStr,"%02d:%s %s RSSI=%d\n",ssidData.id, ssidData.essid, ssidData.bssid, ssidData.rssi);
-        lowerTty.putString(tempStr);
+        if(WiFi.RSSI(i)>RSSI_VALID_VALUE){
+          ssidData.id = i;
+          WiFi.SSID(i).getBytes((unsigned char *)ssidData.essid, sizeof(ssidData.essid));
+          convertMacAddr(WiFi.BSSID(i), ssidData.bssid);
+          ssidData.rssi = WiFi.RSSI(i);
+         ssidData.frequency = 0;
+         ssidData.latitude = latitude;
+          ssidData.longitude = longitude;
+          sprintf(ssidData.datetime,"%04d-%02d-%02d %02d:%02d:%02d",
+              gps.date.year(),rtcDate.Month,rtcDate.Date,rtcTime.Hours,rtcTime.Minutes,rtcTime.Seconds);
+          json = json + ssidData.getJson() + ",\n";
+          sprintf(tempStr,"%02d:%s %s RSSI=%d\n",ssidData.id, ssidData.essid, ssidData.bssid, ssidData.rssi);
+          lowerTty.putString(tempStr);
+        }
       }
       writeRecord((char *)json.c_str());
     }
@@ -229,7 +235,10 @@ static unsigned int checkUserAction(void){
     vibration(200);
     
     heatmapApi.init((char *)SERVER_HOST);    
-    if(connectWiFi()){
+
+    if(myWifi.connect(WiFi)){
+      sprintf(tempStr,"Connect to %s\n",myWifi.getConnectedSsid().c_str());
+      lowerTty.putString(tempStr);
       if(heatmapApi.echo(echoMsg)){
         // server avaliable
         lowerTty.putString("WebApi ECHO success.\n");
@@ -260,7 +269,7 @@ static unsigned int checkUserAction(void){
         lowerTty.putString("WebApi ECHO failed.\n");
       }
     }
-    disconnectWiFi();   
+    myWifi.disconnect(WiFi);   
     result = result | 0x00000001;
   }
   if (M5.BtnB.isPressed()) {  //If button B is pressed.
@@ -370,6 +379,7 @@ static void printGpsLocation(double latitude, double longitude, bool valid) {
   sprintf(tempStr,"Longitude:%s", tmpLng);
   upperTty.writeLine(row+1, tempStr);
 }
+/*
 bool connectWiFi() {
   bool ret = false;
   int i;
@@ -383,21 +393,25 @@ bool connectWiFi() {
   Serial.printf("function:connectWiFi, i=%d,return(%d)\n", i, ret);
   return ret;
 }
+*/
+/*
 void disconnectWiFi() {
   WiFi.disconnect();
   delay(100);
   Serial.printf("function:disconnectWiFi, exit\n");
 }
+*/
+
 int writeRecord(char *record) {
   int ret = 0;
   File file;
   const char *fileName = DATA_FILE_NAME;
 
-  Serial.printf("function:writeRecord, ssid=%s\n", record);
+//  Serial.printf("function:writeRecord, ssid=%s\n", record);
   file = SD.open(fileName, FILE_APPEND);
   file.print(record);
   file.close();
-  Serial.printf("function:writeRecord, return(%d)\n", ret);
+//  Serial.printf("function:writeRecord, return(%d)\n", ret);
   return ret;
 }
 int createPostMsg(String& postMsg ){
@@ -448,8 +462,9 @@ bool isScanEnable(){
       smartDelay(100);      
     }
     return false;
+  } else {
+    return true;
   }
-  return true;
 }
 int dumpRecord() {
   const char *fileName = DATA_FILE_NAME;
@@ -528,7 +543,7 @@ void displayParameters(){
   sprintf(tmpStr,"FILE_SIZE_MAX=%d\n",paramFileSizeMax);
   lowerTty.putString(tmpStr);
   for(i=0;i<HOME_SSID_MAX;i++){
-    sprintf(tmpStr,"HOME_SSID_%d=%s / PASS=%s\n",i,paramHomeSsid[i].c_str(),paramHomeSsidPass[i].c_str());
+    sprintf(tmpStr,"HOME_SSID_%d=%s\n",i,myWifi.getSsid(i).c_str());
     lowerTty.putString(tmpStr);
   }
 

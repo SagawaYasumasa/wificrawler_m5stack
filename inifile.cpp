@@ -67,7 +67,7 @@ String Inifile::getWord(String& str){
   String word="";
   int i;
 
-  Serial.printf("Inifile::getWord : str =%s\n",str.c_str());
+//  Serial.printf("Inifile::getWord : str =%s\n",str.c_str());
   str.trim();
   for(i=0;i<str.length();i++){
     if(str.charAt(i)==' ' || str.charAt(i)=='\t'){
@@ -79,7 +79,7 @@ String Inifile::getWord(String& str){
     }
   }
   str.trim();
-  Serial.printf("Inifile::getWord : word =%s\n",word.c_str());
+//  Serial.printf("Inifile::getWord : word =%s\n",word.c_str());
   return word;
 }
 // Get 1 Line form file
@@ -98,6 +98,6 @@ String Inifile::getLine(File& file){
       str += c;
     }
   }
-  Serial.printf("Inifile::getLine : str =%s\n",str.c_str());
+//  Serial.printf("Inifile::getLine : str =%s\n",str.c_str());
   return str;
 }
