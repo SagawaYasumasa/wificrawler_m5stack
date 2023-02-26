@@ -1,5 +1,5 @@
 #define MAJOR_VERSION 1
-#define MINOR_VERSION 4
+#define MINOR_VERSION 5
 
 #include "private.h"
 #define CONFIG_FILE_NAME  "/system.ini"
@@ -90,7 +90,7 @@ void setup() {
   paramFileSizeMax = (size_t)atoi(valueString.c_str());
   sprintf(tmpStr,"paramFileSizeMax=%d\n",paramFileSizeMax);
   lowerTty.putString(tmpStr);
-  // HOME_SSID and HOME_SSID_PASS
+  // "HOME_SSID" and "HOME_SSID_PASS"
   unsigned int i;
   for(i=0;i<HOME_SSID_MAX;i++){
     sprintf(tmpStr,"HOME_SSID_%d",i);
@@ -99,7 +99,7 @@ void setup() {
     inifile.getValue(CONFIG_FILE_NAME,tmpStr,pskString);
     myWifi.setSsid(i,ssidString.c_str(),pskString.c_str());
   }
-  
+
   WiFi.mode(WIFI_STA);  // Set WiFi to station mode and disconnect from an AP if it was previously connected.
   WiFi.disconnect();    //Turn off all wifi connections.
   delay(100);           //100 ms delay.
@@ -132,12 +132,11 @@ void setup() {
 void loop() {
   long        asyncScanStart = 0; // millis();
   int         scanResult;
-  unsigned int userAction;
 
   int numberOfWifi = 0;
   double latitude = 0.0;
   double longitude = 0.0;
-  char  datetime[DATETIME_SIZE + 1] = { 0 };
+//  char  datetime[DATETIME_SIZE + 1] = { 0 };
   char  tempStr[256]={0};
   int   markX, markY;
   int   markChar = ' ';     
@@ -163,7 +162,7 @@ void loop() {
   printGpsLocation(latitude, longitude, true);
 
   // check button ////////////////////////////////////////////////////////////
-  userAction = checkUserAction();
+  checkUserAction();
   // Scanning Wi-Fi //////////////////////////////////////////////////////////
   if( isScanEnable() && millis()>(LastScanMillis+WifiScanInterval)){
     asyncScanStart = millis();    // set Scan Start Time  
@@ -177,7 +176,7 @@ void loop() {
         break;
       }
       // check buttun //////////////////////////////////////////////////////////
-      userAction = checkUserAction();
+      checkUserAction();
     }while(millis() < (asyncScanStart+AsyncScanTimeout));
 
     // after Wi-Fi scan ///////////////////////////////////////////////////////
@@ -187,7 +186,7 @@ void loop() {
     if (numberOfWifi == 0 || numberOfWifi == WIFI_SCAN_FAILED) {
       Serial.printf("scanResult=%d\n",scanResult);
       // no networks found
-      lowerTty.putString((char *)"no networks found.\n");
+      lowerTty.putString("no networks found.\n");
     } else {
       M5.Rtc.GetDate(&rtcDate);
       M5.Rtc.GetTime(&rtcTime);   
@@ -203,22 +202,23 @@ void loop() {
           WiFi.SSID(i).getBytes((unsigned char *)ssidData.essid, sizeof(ssidData.essid));
           convertMacAddr(WiFi.BSSID(i), ssidData.bssid);
           ssidData.rssi = WiFi.RSSI(i);
-         ssidData.frequency = 0;
-         ssidData.latitude = latitude;
+          ssidData.frequency = 0;
+          ssidData.latitude = latitude;
           ssidData.longitude = longitude;
           sprintf(ssidData.datetime,"%04d-%02d-%02d %02d:%02d:%02d",
               gps.date.year(),rtcDate.Month,rtcDate.Date,rtcTime.Hours,rtcTime.Minutes,rtcTime.Seconds);
           json = json + ssidData.getJson() + ",\n";
-          sprintf(tempStr,"%02d:%s %s RSSI=%d\n",ssidData.id, ssidData.essid, ssidData.bssid, ssidData.rssi);
+          sprintf(tempStr,"%02d:%s %s RSSI=%ld\n",ssidData.id, ssidData.essid, ssidData.bssid, ssidData.rssi);
           lowerTty.putString(tempStr);
         }
       }
-      writeRecord((char *)json.c_str());
+      writeRecord(json.c_str());
     }
   }
   smartDelay(20);
 }
-static unsigned int checkUserAction(void){
+unsigned int checkUserAction(){
+//static unsigned int checkUserAction(void){
   char  tempStr[256]={0};  
   unsigned int result = 0x00000000;
 
@@ -228,14 +228,18 @@ static unsigned int checkUserAction(void){
     MyWebApi  heatmapApi;
     String  echoMsg = "[{\"CLIENT\":\"ARDUINO\"}]";
     String  postMsg = "";
+    String  server ="";
     int result; 
     int recordCount;   
 
     lowerTty.putString("Button A pressed.\n");
     vibration(200);
-    
-    heatmapApi.init((char *)SERVER_HOST);    
 
+   // "SERVER"
+    inifile.getValue(CONFIG_FILE_NAME,"SERVER",server);
+    heatmapApi.init(server.c_str());
+    
+    lowerTty.putString("connecting Wi-Fi...\n");
     if(myWifi.connect(WiFi)){
       sprintf(tempStr,"Connect to %s\n",myWifi.getConnectedSsid().c_str());
       lowerTty.putString(tempStr);
@@ -277,17 +281,6 @@ static unsigned int checkUserAction(void){
     vibration(200);
     displayParameters();
 
-/*
-    // Display current information
-    // Date Time
-    RTC_TimeTypeDef   rtcTime;
-    RTC_DateTypeDef   rtcDate;
-    M5.Rtc.GetDate(&rtcDate);
-    M5.Rtc.GetTime(&rtcTime);   
-    sprintf(tempStr,"RTC Date & Time = %04d-%02d-%02d %02d:%02d:%02d\n",
-        gps.date.year(),rtcDate.Month,rtcDate.Date,rtcTime.Hours,rtcTime.Minutes,rtcTime.Seconds);
-    lowerTty.putString(tempStr);
-*/
     result = result | 0x00000002;
   }
   if (M5.BtnC.isPressed()) {  //If button C is pressed.
@@ -339,8 +332,8 @@ static void printGpsHdop(int hdop, bool valid) {
 static void printGpsDateTime(TinyGPSDate &d, TinyGPSTime &t) {
   const int row = 4;
   char  tempStr[256]={0};  
-  char tmpDate[10 + 1];  // "YYYY/MM/DD"
-  char tmpTime[8 + 1];   //  "hh:mm:ss"
+  char tmpDate[14 + 1]={0};  // "YYYY/MM/DD"
+  char tmpTime[14 + 1]={0};   //  "hh:mm:ss"
 
   memset(tmpDate, 0x00, sizeof(tmpDate));
   memset(tmpTime, 0x00, sizeof(tmpTime));
@@ -379,55 +372,29 @@ static void printGpsLocation(double latitude, double longitude, bool valid) {
   sprintf(tempStr,"Longitude:%s", tmpLng);
   upperTty.writeLine(row+1, tempStr);
 }
-/*
-bool connectWiFi() {
-  bool ret = false;
-  int i;
 
-  WiFi.begin(HOME_SSID, HOME_SSID_PASS);
-  for (i = 0; i < 60; i++) {
-    delay(100);
-    ret = (WiFi.status() == WL_CONNECTED);
-    if (ret) break;
-  }
-  Serial.printf("function:connectWiFi, i=%d,return(%d)\n", i, ret);
-  return ret;
-}
-*/
-/*
-void disconnectWiFi() {
-  WiFi.disconnect();
-  delay(100);
-  Serial.printf("function:disconnectWiFi, exit\n");
-}
-*/
-
-int writeRecord(char *record) {
-  int ret = 0;
+bool writeRecord(const char *record) {
   File file;
-  const char *fileName = DATA_FILE_NAME;
-
-//  Serial.printf("function:writeRecord, ssid=%s\n", record);
-  file = SD.open(fileName, FILE_APPEND);
-  file.print(record);
-  file.close();
-//  Serial.printf("function:writeRecord, return(%d)\n", ret);
-  return ret;
+  file = SD.open(DATA_FILE_NAME, FILE_APPEND);
+  if(file){
+    file.print(record);
+    file.close();
+  }
+  return (file != false);
 }
 int createPostMsg(String& postMsg ){
-  const char *fileName = DATA_FILE_NAME;
   char *buf;
   int ptr = 0;
   int recordCount = 0;
   File file;
 
   Serial.printf("function:createPostMsg\n");
-  file = SD.open(fileName, FILE_READ);
+  file = SD.open(DATA_FILE_NAME, FILE_READ);
   Serial.printf("function:createPostMsg, available=%d\n", file.available());
 
   buf = (char *)malloc(file.size() + 2);  // top='[' ,tail=0x00
   if(buf == NULL){
-    lowerTty.putString((char *)"createPostMsg: failed to memory allocation.\n");
+    lowerTty.putString("createPostMsg: failed to memory allocation.\n");
     file.close();
     return -1;    
   }
@@ -448,15 +415,14 @@ int createPostMsg(String& postMsg ){
   return recordCount;
 }
 bool isScanEnable(){
-  const char *fileName = DATA_FILE_NAME;
   File file;
-  size_t  size;
+  size_t  size = 0;
   
-  file = SD.open(fileName, FILE_READ);
+  file = SD.open(DATA_FILE_NAME, FILE_READ);
   size = file.available();
   file.close();
   if(size > paramFileSizeMax){
-    lowerTty.putString("data file size too large.\n");
+    lowerTty.putString("datafile size too large.\n");
     
     while(checkUserAction() == 0){
       smartDelay(100);      
@@ -510,15 +476,17 @@ bool deleteFile() {
   Serial.printf("function:DeleteFile, return(%d)\n", ret);
   return ret;
 }
+// convert Mac Address( binary to charactor string) //////////////////////////
 void convertMacAddr(uint8_t *bin, char *str) {
   sprintf(str, "%02X:%02X:%02X:%02X:%02X:%02X", bin[0], bin[1], bin[2], bin[3], bin[4], bin[5]);
 }
+// set RTC ///////////////////////////////////////////////////////////////////
 void setRtc(TinyGPSDate &d, TinyGPSTime &t){
   RTC_TimeTypeDef   rtcTime;
   RTC_DateTypeDef   rtcDate;
 
   if(d.isValid() && t.isValid()){
-    rtcDate.Year = d.year();  // RTC YEAR is not available ( fiexd 2000 )
+    rtcDate.Year = d.year();  // RTC YEAR is not available ( fiexed 2000 )
     rtcDate.Month = d.month();
     rtcDate.Date = d.day();
     rtcTime.Hours = t.hour();
@@ -528,24 +496,33 @@ void setRtc(TinyGPSDate &d, TinyGPSTime &t){
     M5.Rtc.SetTime(&rtcTime);
   }
 }
+// Vibration /////////////////////////////////////////////////////////////////
 void vibration(int msec){
   power.SetLDOEnable(3,true);
   delay(msec);
   power.SetLDOEnable(3,false);
 }
+// Display Parameters ////////////////////////////////////////////////////////
 void displayParameters(){
-  char  tmpStr[256]= {0};  
+  char  tmpStr[256]= {0};
+  String  value;  
   long  msec;
   int   i;
   lowerTty.clear();  
 
   lowerTty.putString("System Parameters\n");
+  // FILE_SIZE_MAX
   sprintf(tmpStr,"FILE_SIZE_MAX=%d\n",paramFileSizeMax);
   lowerTty.putString(tmpStr);
+  // HOME_SSID
   for(i=0;i<HOME_SSID_MAX;i++){
     sprintf(tmpStr,"HOME_SSID_%d=%s\n",i,myWifi.getSsid(i).c_str());
     lowerTty.putString(tmpStr);
   }
+  // SERVER
+  inifile.getValue(CONFIG_FILE_NAME,"SERVER",value);
+  sprintf(tmpStr,"SERVER=%s\n",value.c_str());
+  lowerTty.putString(tmpStr);
 
   lowerTty.putString("\n");
   lowerTty.putString("Press BUTTON B to exit.\n");
@@ -562,8 +539,8 @@ void displayParameters(){
   }
   lowerTty.clear();
 }
+// Display help //////////////////////////////////////////////////////////////
 void displayHelp(){
-  char  tmpStr[256]= {0};  
   long  msec;
   lowerTty.clear();  
 

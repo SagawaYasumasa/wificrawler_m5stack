@@ -6,14 +6,12 @@
 
 #define ESSID_SIZE  32
 #define BSSID_SIZE  18
-#define DATETIME_SIZE 19
+#define DATETIME_SIZE 29
 
 class SsidData {
   public:
     SsidData();
     ~SsidData();
-    char *getFileRecord();
-    bool  setFileRecord(char *);
     String  getJson();
 
     int     id;
@@ -25,7 +23,6 @@ class SsidData {
     double  longitude;
     char datetime[DATETIME_SIZE+1];
   private:
-    char  _fileRecord[155+1];
     String  _json;
 };
 #endif

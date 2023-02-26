@@ -14,12 +14,12 @@ class MyWebApi {
   public:
     MyWebApi();
     ~MyWebApi();
-    bool  init(char *serverAddress);
+    bool  init(const char *serverAddress);
     bool  echo(String msg);
     int   postSsid(String msg);
   private:
-    char  server[ADDRESS_SIZE];
-    char  echoUri[URI_SIZE];
-    char  postSsidUri[URI_SIZE];
+    char  _server[ADDRESS_SIZE];
+    char  _echoUri[URI_SIZE];
+    char  _postSsidUri[URI_SIZE];
 };
 #endif

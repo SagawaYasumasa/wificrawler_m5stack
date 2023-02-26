@@ -1,7 +1,7 @@
 #include "debugTool.h"
 #include <string.h>
 
-void dumpByte(char *memory, unsigned int size){
+void dumpByte(const unsigned char *memory, unsigned int size){
   int ptr = 0;
   unsigned int i = 0;
   while(i != size){

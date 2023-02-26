@@ -5,16 +5,16 @@
 // Constructor ///////////////////////////////////////////////////////////////
 MyWebApi::MyWebApi(){
   Serial.printf("myWebApi:Construct.\n");
-  memset(server,0,sizeof(server));
-  memset(echoUri,0,sizeof(echoUri));
-  memset(postSsidUri,0,sizeof(postSsidUri));
+  memset(_server,0,sizeof(_server));
+  memset(_echoUri,0,sizeof(_echoUri));
+  memset(_postSsidUri,0,sizeof(_postSsidUri));
 }
 // Destructor ////////////////////////////////////////////////////////////////
 MyWebApi::~MyWebApi(){
   Serial.printf("myWebApi:Destruct.\n");
 }
 // Init //////////////////////////////////////////////////////////////////////
-bool MyWebApi::init(char *serverAddress){
+bool MyWebApi::init(const char *serverAddress){
   Serial.printf("myWebApi::init: serverAddress=%s\n",serverAddress);
 
   // Create server address
@@ -22,25 +22,25 @@ bool MyWebApi::init(char *serverAddress){
     Serial.printf("myWebApi::init : serverAddress is too long.\n");
     return false;
   }
-  strcpy(server, serverAddress);
+  strcpy(_server , serverAddress);
 
   // Create echo URI
-  if(strlen(server)+strlen(ECHO)>(URI_SIZE-1)){
+  if(strlen(_server )+strlen(ECHO)>(URI_SIZE-1)){
     Serial.printf("myWebApi::init : ECHO is too long.\n");
     return false;
   }
-  strcat(echoUri,server);
-  strcat(echoUri,ECHO);
-  Serial.printf("myWebApi::init : echoUri=%s\n",echoUri);
+  strcat(_echoUri,_server );
+  strcat(_echoUri,ECHO);
+  Serial.printf("myWebApi::init : _echoUri=%s\n",_echoUri);
 
   // Create postSsid URI
-  if(strlen(server)+strlen(POSTSSID)>(URI_SIZE-1)){
+  if(strlen(_server )+strlen(POSTSSID)>(URI_SIZE-1)){
     Serial.printf("myWebApi::init : POSTSSID is too long.\n");
     return false;
   }
-  strcat(postSsidUri,server);
-  strcat(postSsidUri,POSTSSID);
-  Serial.printf("myWebApi::init : postSsidUri=%s\n",postSsidUri);
+  strcat(_postSsidUri,_server );
+  strcat(_postSsidUri,POSTSSID);
+  Serial.printf("myWebApi::init : _postSsidUri=%s\n",_postSsidUri);
 
   return true;
 }
@@ -54,7 +54,7 @@ bool MyWebApi::echo(String msg){
   Serial.printf("myWebApi::echo: msg=%s\n",msg.c_str());
 
   HTTPClient http;
-  http.begin(echoUri);
+  http.begin(_echoUri);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
   responseCode = http.POST(msg.c_str());
 
@@ -84,7 +84,7 @@ int MyWebApi::postSsid(String msg){
   Serial.printf("myWebApi::postSsid: msg.length=%d\n",msg.length());
 
   HTTPClient http;
-  http.begin(postSsidUri);
+  http.begin(_postSsidUri);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
   responseCode = http.POST(msg.c_str());
 
